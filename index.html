@@ -156,6 +156,18 @@
             border: 1px solid var(--secondary-color);
         }
 
+        .btn-trigger {
+            background-color: #333;
+            color: var(--text-primary);
+            width: 100%;
+        }
+        
+        .btn-trigger:active {
+            background-color: var(--primary-color);
+            color: #000;
+            transform: scale(0.98);
+        }
+
         .slider-group {
             display: flex;
             flex-direction: column;
@@ -198,7 +210,7 @@
 
     <div id="init-overlay">
         <h1>Auditory Simulation</h1>
-        <p>This application synthesizes specific hearing phenomena using the native Web Audio API. Warning: Contains high-pitched and potentially grating frequencies.</p>
+        <p>This application synthesizes specific hearing phenomena using the native Web Audio API.</p>
         <button class="btn-start-audio" onclick="initAudio()">Enable Audio & Start</button>
     </div>
 
@@ -211,37 +223,49 @@
         <div class="grid">
             
             <div class="card">
-                <h2>Ringing Phone Tinnitus</h2>
-                <p>Simulates a phantom telephone ring. Uses two beating oscillators (440Hz & 480Hz) routed through a fast LFO for the mechanical "trill", and programmed to pulse on a 2-second on / 4-second off cadence.</p>
+                <h2>Wave-like Tinnitus</h2>
+                <p>A 3000Hz sine wave tone that smoothly fades in and out every 2 seconds. Starts at a very low 1% volume.</p>
                 <div class="controls">
                     <button id="btn1" class="btn-toggle" onclick="toggleTinnitus()">Play Sound</button>
                     <div class="slider-group">
-                        <label for="vol1"><span>Volume</span> <span id="val1">50%</span></label>
-                        <input type="range" id="vol1" min="0" max="1" step="0.01" value="0.5" oninput="updateVol('vol1', 'tinnitus', 'val1')">
+                        <label for="vol1"><span>Volume</span> <span id="val1">1%</span></label>
+                        <input type="range" id="vol1" min="0" max="1" step="0.01" value="0.01" oninput="updateVol('vol1', 'tinnitus', 'val1')">
                     </div>
                 </div>
             </div>
 
             <div class="card">
                 <h2>Constant 6000Hz Tone</h2>
-                <p>A pure, continuous sine wave fixed at 6000Hz. This represents a classic high-frequency sensorineural tinnitus tone. Keep volume low to avoid ear strain.</p>
+                <p>A pure, continuous sine wave fixed at 6000Hz. This represents a classic high-frequency sensorineural tinnitus tone. Starts at 3%.</p>
                 <div class="controls">
                     <button id="btn2" class="btn-toggle" onclick="toggleTone()">Play Sound</button>
                     <div class="slider-group">
-                        <label for="vol2"><span>Volume</span> <span id="val2">20%</span></label>
-                        <input type="range" id="vol2" min="0" max="1" step="0.01" value="0.2" oninput="updateVol('vol2', 'tone6k', 'val2')">
+                        <label for="vol2"><span>Volume</span> <span id="val2">3%</span></label>
+                        <input type="range" id="vol2" min="0" max="1" step="0.01" value="0.03" oninput="updateVol('vol2', 'tone6k', 'val2')">
                     </div>
                 </div>
             </div>
 
             <div class="card">
                 <h2>Muffled Talking (Paper Bag)</h2>
-                <p>Simulates hearing speech through a barrier. Generates white noise, applies a strict 400Hz lowpass filter, and modulates the amplitude randomly to mimic the syllables and cadence of human conversation.</p>
+                <p>Simulates hearing speech through a barrier. Generates noise, applies a strict 400Hz lowpass filter, and modulates amplitude to mimic syllables.</p>
                 <div class="controls">
                     <button id="btn3" class="btn-toggle" onclick="toggleMuffled()">Play Sound</button>
                     <div class="slider-group">
-                        <label for="vol3"><span>Volume</span> <span id="val3">80%</span></label>
-                        <input type="range" id="vol3" min="0" max="1" step="0.01" value="0.8" oninput="updateVol('vol3', 'muffled', 'val3')">
+                        <label for="vol3"><span>Volume</span> <span id="val3">20%</span></label>
+                        <input type="range" id="vol3" min="0" max="1" step="0.01" value="0.20" oninput="updateVol('vol3', 'muffled', 'val3')">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Tensor Tympani Rumble</h2>
+                <p>Simulates the sound of voluntarily flexing the muscle inside the middle ear (ear popping). Creates a brief 50Hz low-frequency thrum.</p>
+                <div class="controls">
+                    <button id="btn4" class="btn-trigger" onclick="triggerRumble()">Trigger Flex (0.8s)</button>
+                    <div class="slider-group">
+                        <label for="vol4"><span>Volume</span> <span id="val4">80%</span></label>
+                        <input type="range" id="vol4" min="0" max="1" step="0.01" value="0.80" oninput="updateVol('vol4', 'rumble', 'val4')">
                     </div>
                 </div>
             </div>
@@ -253,11 +277,11 @@
         let audioCtx;
         let masterGain;
 
-        // State object to keep track of active audio nodes
         const nodes = {
-            tinnitus: { playing: false, osc1: null, osc2: null, lfo: null, lfoGain: null, cadenceGain: null, outGain: null, interval: null },
+            tinnitus: { playing: false, osc: null, lfo: null, modGain: null, lfoGain: null, outGain: null },
             tone6k: { playing: false, osc: null, outGain: null },
-            muffled: { playing: false, source: null, filter: null, babbleGain: null, outGain: null, interval: null }
+            muffled: { playing: false, source: null, filter: null, babbleGain: null, outGain: null, interval: null },
+            rumble: { outGain: null } // One-shot sound, no playing state needed
         };
 
         // 1. Initialize Audio Context
@@ -278,72 +302,56 @@
             }
         }
 
-        // --- Sound 1: Ringing Phone Tinnitus ---
+        // --- Utility: Generate Noise Buffer ---
+        function createNoiseBuffer(duration = 2) {
+            const bufferSize = audioCtx.sampleRate * duration;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const output = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1; 
+            }
+            return buffer;
+        }
+
+        // --- Sound 1: Wave-like Tinnitus (2-second cycle) ---
         function toggleTinnitus() {
             const s = nodes.tinnitus;
             const btn = document.getElementById('btn1');
             
             if (s.playing) {
-                // Stop Sequence
-                s.osc1.stop(); s.osc2.stop(); s.lfo.stop();
-                clearInterval(s.interval);
+                s.osc.stop(); 
+                s.lfo.stop();
                 s.playing = false;
                 updateBtn(btn, false);
             } else {
-                // Start Sequence
-                s.osc1 = audioCtx.createOscillator();
-                s.osc2 = audioCtx.createOscillator();
+                s.osc = audioCtx.createOscillator();
                 s.lfo = audioCtx.createOscillator();
                 
+                s.modGain = audioCtx.createGain();
                 s.lfoGain = audioCtx.createGain();
-                s.cadenceGain = audioCtx.createGain();
                 s.outGain = audioCtx.createGain();
 
-                // 440 and 480 beating creates a dissonant ring
-                s.osc1.type = 'sine';
-                s.osc1.frequency.value = 440;
-                s.osc2.type = 'sine';
-                s.osc2.frequency.value = 480;
+                // Base frequency
+                s.osc.type = 'sine';
+                s.osc.frequency.value = 3000;
 
-                // LFO creates the fast mechanical "trill" of an old phone (~20Hz)
-                s.lfo.type = 'square';
-                s.lfo.frequency.value = 20;
+                // 0.5Hz LFO creates exactly a 2-second peak-to-peak wave
+                s.lfo.type = 'sine';
+                s.lfo.frequency.value = 0.5; 
                 
-                // LFO controls the amplitude of the combined oscillators
-                s.lfoGain.gain.value = 0; 
-                s.lfo.connect(s.lfoGain.gain);
-
-                // Cadence gain creates the 2-seconds on, 4-seconds off ringing pattern
-                s.cadenceGain.gain.value = 1;
+                s.modGain.gain.value = 0.5; 
+                s.lfoGain.gain.value = 0.5;
                 
-                // Final output volume from slider
                 s.outGain.gain.value = parseFloat(document.getElementById('vol1').value);
 
-                // Routing
-                s.osc1.connect(s.lfoGain);
-                s.osc2.connect(s.lfoGain);
-                s.lfoGain.connect(s.cadenceGain);
-                s.cadenceGain.connect(s.outGain);
+                s.lfo.connect(s.lfoGain);
+                s.lfoGain.connect(s.modGain.gain); 
+                s.osc.connect(s.modGain);
+                s.modGain.connect(s.outGain);
                 s.outGain.connect(masterGain);
 
-                // Start Nodes
-                s.osc1.start();
-                s.osc2.start();
+                s.osc.start();
                 s.lfo.start();
-
-                // Cadence Interval Logic
-                let isRinging = true;
-                s.interval = setInterval(() => {
-                    isRinging = !isRinging;
-                    const targetVol = isRinging ? 1 : 0;
-                    // Use setTargetAtTime to avoid audio clicking artifacts
-                    s.cadenceGain.gain.setTargetAtTime(targetVol, audioCtx.currentTime, 0.05);
-                    
-                    // Modify interval dynamically (2s on, 4s off)
-                    // Note: clearing and resetting setInterval for dynamic timing is bulky, 
-                    // so we'll approximate with a steady 2s toggle for simplicity, 
-                    // or implement a simple step counter.
-                }, 2000); 
 
                 s.playing = true;
                 updateBtn(btn, true);
@@ -377,18 +385,7 @@
             }
         }
 
-        // --- Sound 3: Muffled Babble (Fallback implementation) ---
-        // Generates white noise buffer
-        function createNoiseBuffer() {
-            const bufferSize = audioCtx.sampleRate * 2; // 2 seconds
-            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-            const output = buffer.getChannelData(0);
-            for (let i = 0; i < bufferSize; i++) {
-                output[i] = Math.random() * 2 - 1; 
-            }
-            return buffer;
-        }
-
+        // --- Sound 3: Muffled Babble ---
         function toggleMuffled() {
             const s = nodes.muffled;
             const btn = document.getElementById('btn3');
@@ -403,12 +400,10 @@
                 s.source.buffer = createNoiseBuffer();
                 s.source.loop = true;
 
-                // Lowpass filter creates the "paper bag" / muffled wall effect
                 s.filter = audioCtx.createBiquadFilter();
                 s.filter.type = 'lowpass';
                 s.filter.frequency.value = 400; 
 
-                // Gain node that we will rapidly modulate to mimic speech syllables
                 s.babbleGain = audioCtx.createGain();
                 s.babbleGain.gain.value = 0;
 
@@ -422,16 +417,11 @@
 
                 s.source.start();
 
-                // Babble modulation logic
                 s.interval = setInterval(() => {
-                    // Randomize amplitude to act like vocal intensity
                     let target = Math.random() * 0.8 + 0.2; 
-                    // 20% chance to pause entirely (spaces between words/sentences)
-                    if (Math.random() < 0.2) target = 0;
+                    if (Math.random() < 0.2) target = 0; 
                     
-                    // Random duration for the "syllable"
                     const duration = (Math.random() * 0.15 + 0.05); 
-                    
                     s.babbleGain.gain.setTargetAtTime(target, audioCtx.currentTime, duration / 2);
                 }, 150);
 
@@ -440,20 +430,48 @@
             }
         }
 
+        // --- Sound 4: Tensor Tympani Rumble (One-shot) ---
+        function triggerRumble() {
+            if (!audioCtx) return;
+
+            const t = audioCtx.currentTime;
+            const vol = parseFloat(document.getElementById('vol4').value);
+
+            const source = audioCtx.createBufferSource();
+            source.buffer = createNoiseBuffer(1); // 1 sec buffer
+
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 50; // Deep rumble frequency
+            filter.Q.value = 1;
+
+            const envGain = audioCtx.createGain();
+            
+            // Envelope generation: Quick attack, hold, smooth fade
+            envGain.gain.setValueAtTime(0, t);
+            envGain.gain.linearRampToValueAtTime(vol, t + 0.1); 
+            envGain.gain.setValueAtTime(vol, t + 0.2);          
+            envGain.gain.linearRampToValueAtTime(0, t + 0.8);   
+
+            source.connect(filter);
+            filter.connect(envGain);
+            envGain.connect(masterGain);
+
+            source.start(t);
+            source.stop(t + 0.9); // Cleanup node after release
+        }
+
         // --- Utility Functions ---
 
-        // Update Volume for active nodes
         function updateVol(sliderId, nodeKey, textId) {
             const val = parseFloat(document.getElementById(sliderId).value);
             document.getElementById(textId).innerText = Math.round(val * 100) + '%';
             
             if (nodes[nodeKey].outGain) {
-                // Smooth transition to new volume
                 nodes[nodeKey].outGain.gain.setTargetAtTime(val, audioCtx.currentTime, 0.1);
             }
         }
 
-        // Update Button UI state
         function updateBtn(btn, isPlaying) {
             if (isPlaying) {
                 btn.innerText = 'Stop Sound';
@@ -464,11 +482,11 @@
             }
         }
 
-        // Master Stop - checks state and triggers toggles to ensure proper cleanup
         function masterStop() {
             if (nodes.tinnitus.playing) toggleTinnitus();
             if (nodes.tone6k.playing) toggleTone();
             if (nodes.muffled.playing) toggleMuffled();
+            // Rumble is a one-shot, so it resolves itself based on the envelope time
         }
     </script>
 </body>
